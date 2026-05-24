@@ -29,7 +29,7 @@
     <maven-plugin-dependency.version>3.10.0</maven-plugin-dependency.version>
     <maven-plugin-jar.version>3.4.2</maven-plugin-jar.version>
     <maven-plugin-shade.version>3.6.2</maven-plugin-shade.version>
-    <maven-plugin-install.version>3.1.2</maven-plugin-install.version>
+    <maven-plugin-install.version>3.1.4</maven-plugin-install.version>
     <maven-plugin-deploy.version>3.1.2</maven-plugin-deploy.version>
     <maven-plugin-site.version>3.12.1</maven-plugin-site.version>
     <maven-plugin-project-info-reports.version>3.9.0</maven-plugin-project-info-reports.version>
