@@ -69,6 +69,8 @@ public final class StartupConfigurationReviewer {
                 config.verbose(),
                 config.privacyMode(),
                 config.missingLocationBehavior(),
+                config.skipFiles(),
+                config.excludeDirectories(),
                 config.userRoots(),
                 new DefaultPathResolver(Path.of(System.getProperty("user.home"))).projectRoots(primaryProjectRoot)
             );

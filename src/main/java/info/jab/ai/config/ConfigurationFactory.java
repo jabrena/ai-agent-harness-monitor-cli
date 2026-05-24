@@ -51,8 +51,10 @@ public final class ConfigurationFactory {
 
         Set<Harness> harnesses = overrides.harnessCsv() == null ? base.harnesses() : parseHarnesses(overrides.harnessCsv());
         Duration interval = overrides.intervalSeconds() == null ? base.interval() : Duration.ofSeconds(overrides.intervalSeconds());
+        List<String> skipFiles = overrides.skipFiles().isEmpty() ? base.skipFiles() : overrides.skipFiles();
+        List<String> excludeDirectories = overrides.excludeDirectories().isEmpty() ? base.excludeDirectories() : overrides.excludeDirectories();
         List<Path> projectScanRoots = overrides.projectRoot() == null
-            ? discoverProjects(projectsDirectories)
+            ? discoverProjects(projectsDirectories, excludeDirectories)
             : List.of(projectRoot);
         Path primaryProjectRoot = projectScanRoots.isEmpty() ? projectRoot : projectScanRoots.getFirst();
 
@@ -63,13 +65,15 @@ public final class ConfigurationFactory {
             projectScanRoots,
             outputDirectory,
             harnesses,
-            base.assetTypes(),
+            assetTypesWithCurrentDefaults(base.assetTypes()),
             interval,
             overrides.noUi() ? false : base.uiEnabled(),
             overrides.yes() || base.autoConfirm(),
             overrides.verbose() || base.verbose(),
             base.privacyMode(),
             base.missingLocationBehavior(),
+            skipFiles,
+            excludeDirectories,
             pathResolver.userRoots(),
             pathResolver.projectRoots(primaryProjectRoot)
         );
@@ -97,9 +101,23 @@ public final class ConfigurationFactory {
             false,
             PrivacyMode.METADATA_ONLY,
             MissingLocationBehavior.WARN_AND_CONTINUE,
+            List.of(),
+            List.of(),
             pathResolver.userRoots(),
             pathResolver.projectRoots(primaryProjectRoot)
         );
+    }
+
+    private Set<AssetType> assetTypesWithCurrentDefaults(Set<AssetType> assetTypes) {
+        if (assetTypes == null || assetTypes.isEmpty()) {
+            return EnumSet.allOf(AssetType.class);
+        }
+        EnumSet<AssetType> enabled = EnumSet.copyOf(assetTypes);
+        EnumSet<AssetType> legacyDefaultAssetTypes = EnumSet.of(AssetType.SKILL, AssetType.MCP, AssetType.RULE, AssetType.CONFIG);
+        if (enabled.containsAll(legacyDefaultAssetTypes)) {
+            enabled.add(AssetType.GUIDANCE);
+        }
+        return enabled;
     }
 
     private Set<Harness> parseHarnesses(String csv) {
@@ -114,11 +132,35 @@ public final class ConfigurationFactory {
     }
 
     private List<Path> discoverProjects(List<Path> projectsDirectories) throws IOException {
+        return discoverProjects(projectsDirectories, List.of());
+    }
+
+    private List<Path> discoverProjects(List<Path> projectsDirectories, List<String> excludeDirectories) throws IOException {
         List<Path> projectScanRoots = new ArrayList<>();
         for (Path directory : projectsDirectories) {
-            projectScanRoots.addAll(projectDiscovery.discover(directory));
+            projectScanRoots.addAll(projectDiscovery.discover(directory).stream()
+                .filter(projectRoot -> !isExcludedProjectRoot(projectRoot, excludeDirectories))
+                .toList());
         }
         return projectScanRoots.stream().distinct().toList();
+    }
+
+    private boolean isExcludedProjectRoot(Path projectRoot, List<String> excludeDirectories) {
+        if (excludeDirectories.isEmpty()) {
+            return false;
+        }
+        Path normalizedProjectRoot = projectRoot.toAbsolutePath().normalize();
+        String fileName = normalizedProjectRoot.getFileName() == null ? normalizedProjectRoot.toString() : normalizedProjectRoot.getFileName().toString();
+        String normalizedPath = normalizedProjectRoot.toString();
+        String slashPath = normalizedPath.replace('\\', '/');
+        return excludeDirectories.stream()
+            .map(String::trim)
+            .filter(excluded -> !excluded.isEmpty())
+            .map(excluded -> excluded.replace('\\', '/'))
+            .anyMatch(excluded -> excluded.equals(fileName)
+                || excluded.equals(normalizedPath)
+                || excluded.equals(slashPath)
+                || slashPath.endsWith("/" + excluded));
     }
 
     private List<Path> normalizeProjectsDirectories(List<Path> projectsDirectories, Path fallback) {

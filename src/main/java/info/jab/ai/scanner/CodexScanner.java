@@ -34,8 +34,8 @@ public final class CodexScanner implements HarnessScanner {
             addFileIfExists(findings, harness(), Scope.USER, AssetType.MCP, "codex-user-mcp", userRoot.resolve("mcp.json"));
             addDirectoryChildren(findings, harness(), Scope.USER, AssetType.MCP, userRoot.resolve("mcps"), path -> hasExtension(path, ".json", ".yaml", ".yml", ".toml"));
         }
-        if (config.assetTypes().contains(AssetType.RULE)) {
-            addFileIfExists(findings, harness(), Scope.USER, AssetType.RULE, "codex-user-agents", userRoot.resolve("AGENTS.md"));
+        if (config.assetTypes().contains(AssetType.GUIDANCE)) {
+            addFileIfExists(findings, harness(), Scope.USER, AssetType.GUIDANCE, "codex-user-agents", userRoot.resolve("AGENTS.md"));
         }
         if (config.assetTypes().contains(AssetType.CONFIG)) {
             addDirectoryIfExists(findings, harness(), Scope.USER, AssetType.CONFIG, "codex-home", userRoot);
@@ -49,8 +49,8 @@ public final class CodexScanner implements HarnessScanner {
             if (config.assetTypes().contains(AssetType.MCP)) {
                 addFileIfExists(findings, harness(), Scope.PROJECT, AssetType.MCP, projectRoot.getFileName() + ":codex-project-mcp", projectRoot.resolve(".codex").resolve("mcp.json"));
             }
-            if (config.assetTypes().contains(AssetType.RULE)) {
-                addFileIfExists(findings, harness(), Scope.PROJECT, AssetType.RULE, projectRoot.getFileName() + ":codex-project-agents", projectRoot.resolve("AGENTS.md"));
+            if (config.assetTypes().contains(AssetType.GUIDANCE)) {
+                addFileIfExists(findings, harness(), Scope.PROJECT, AssetType.GUIDANCE, projectRoot.getFileName() + ":codex-project-agents", projectRoot.resolve("AGENTS.md"));
             }
             if (config.assetTypes().contains(AssetType.CONFIG)) {
                 addFileIfExists(findings, harness(), Scope.PROJECT, AssetType.CONFIG, projectRoot.getFileName() + ":codex-project-config", projectRoot.resolve(".codex").resolve("config.toml"));

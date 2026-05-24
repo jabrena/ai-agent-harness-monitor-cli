@@ -59,6 +59,30 @@ class AuditCliTest {
     }
 
     @Test
+    void detectsProjectAgentsAndSkillsFolders() throws Exception {
+        Path home = tempDir.resolve("home");
+        Path project = tempDir.resolve("project");
+        Path output = tempDir.resolve("out");
+        Files.createDirectories(home);
+        Files.createDirectories(project.resolve(".agents/skills/reviewer"));
+        Files.writeString(project.resolve(".agents/skills/reviewer/SKILL.md"), "Review from agents");
+        Files.createDirectories(project.resolve("skills/planner"));
+        Files.writeString(project.resolve("skills/planner/SKILL.md"), "Plan work");
+
+        AuditConfig config = factory(home).create(new ConfigOverrides(project, null, output, null, null, true, true, false));
+        Snapshot snapshot = AuditScanner.defaultScanner().scan(config);
+
+        assertTrue(snapshot.findings().stream().anyMatch(finding ->
+            finding.harness() == Harness.CURSOR
+                && finding.assetType() == AssetType.SKILL
+                && finding.path().endsWith(".agents/skills/reviewer/SKILL.md")));
+        assertTrue(snapshot.findings().stream().anyMatch(finding ->
+            finding.harness() == Harness.CURSOR
+                && finding.assetType() == AssetType.SKILL
+                && finding.path().endsWith("skills/planner/SKILL.md")));
+    }
+
+    @Test
     void detectsCursorClaudeAndCodexFixtures() throws Exception {
         Path home = tempDir.resolve("home");
         Path project = tempDir.resolve("project");
@@ -75,8 +99,47 @@ class AuditCliTest {
 
         assertTrue(snapshot.findings().stream().anyMatch(finding -> finding.harness() == Harness.CURSOR && finding.assetType() == AssetType.SKILL));
         assertTrue(snapshot.findings().stream().anyMatch(finding -> finding.harness() == Harness.CURSOR && finding.assetType() == AssetType.MCP));
-        assertTrue(snapshot.findings().stream().anyMatch(finding -> finding.harness() == Harness.CLAUDE && finding.assetType() == AssetType.RULE));
-        assertTrue(snapshot.findings().stream().anyMatch(finding -> finding.harness() == Harness.CODEX && finding.assetType() == AssetType.RULE));
+        assertTrue(snapshot.findings().stream().anyMatch(finding -> finding.harness() == Harness.CLAUDE && finding.assetType() == AssetType.GUIDANCE));
+        assertTrue(snapshot.findings().stream().anyMatch(finding -> finding.harness() == Harness.CODEX && finding.assetType() == AssetType.GUIDANCE));
+    }
+
+    @Test
+    void detectsClaudeProjectRootMcpJson() throws Exception {
+        Path home = tempDir.resolve("home");
+        Path project = tempDir.resolve("project");
+        Path output = tempDir.resolve("out");
+        Files.createDirectories(home);
+        Files.createDirectories(project);
+        Files.writeString(project.resolve(".mcp.json"), "{}");
+
+        AuditConfig config = factory(home).create(new ConfigOverrides(project, null, output, null, "claude", true, true, false));
+        Snapshot snapshot = AuditScanner.defaultScanner().scan(config);
+
+        assertTrue(snapshot.findings().stream().anyMatch(finding ->
+            finding.harness() == Harness.CLAUDE
+                && finding.assetType() == AssetType.MCP
+                && finding.path().endsWith(".mcp.json")));
+    }
+
+    @Test
+    void skipsConfiguredFileNamesDuringScan() throws Exception {
+        Path home = tempDir.resolve("home");
+        Path project = tempDir.resolve("project");
+        Path output = tempDir.resolve("out");
+        Files.createDirectories(home);
+        Files.createDirectories(project.resolve(".cursor"));
+        Files.writeString(project.resolve(".cursor/mcp.json"), "{}");
+        Files.writeString(project.resolve("AGENTS.md"), "Codex guidance");
+        Files.writeString(project.resolve("CLAUDE.md"), "Claude guidance");
+
+        AuditConfig config = factory(home).create(
+            new ConfigOverrides(project, null, List.of(), output, null, null, List.of("AGENTS.md", "mcp.json"), true, true, false)
+        );
+        Snapshot snapshot = AuditScanner.defaultScanner().scan(config);
+
+        assertTrue(snapshot.findings().stream().anyMatch(finding -> finding.path().endsWith("CLAUDE.md")));
+        assertFalse(snapshot.findings().stream().anyMatch(finding -> finding.path().endsWith("AGENTS.md")));
+        assertFalse(snapshot.findings().stream().anyMatch(finding -> finding.path().endsWith("mcp.json")));
     }
 
     @Test
@@ -129,6 +192,30 @@ class AuditCliTest {
     }
 
     @Test
+    void excludesConfiguredProjectFoldersFromIncludedDirectories() throws Exception {
+        Path home = tempDir.resolve("home");
+        Path workspace = tempDir.resolve("workspace");
+        Path output = tempDir.resolve("out");
+        Path included = workspace.resolve("included");
+        Path excluded = workspace.resolve("excluded-project");
+        Files.createDirectories(home);
+        Files.createDirectories(included.resolve(".cursor"));
+        Files.writeString(included.resolve(".cursor/mcp.json"), "{}");
+        Files.createDirectories(excluded.resolve(".cursor"));
+        Files.writeString(excluded.resolve(".cursor/mcp.json"), "{}");
+
+        AuditConfig config = factory(home).create(
+            new ConfigOverrides(null, workspace, List.of(workspace), output, null, null, List.of(), List.of("excluded-project"), true, true, false)
+        );
+        Snapshot snapshot = AuditScanner.defaultScanner().scan(config);
+
+        assertTrue(config.projectScanRoots().contains(included.toAbsolutePath().normalize()));
+        assertFalse(config.projectScanRoots().contains(excluded.toAbsolutePath().normalize()));
+        assertTrue(snapshot.findings().stream().anyMatch(finding -> finding.path().contains("included/.cursor/mcp.json")));
+        assertFalse(snapshot.findings().stream().anyMatch(finding -> finding.path().contains("excluded-project/.cursor/mcp.json")));
+    }
+
+    @Test
     void parsesInitRequestJsonConfiguration() throws Exception {
         Path projects = tempDir.resolve("projects");
         ObjectMapper mapper = JsonMapper.create();
@@ -137,9 +224,11 @@ class AuditCliTest {
             """
             {
               "user": "jabrena",
-              "projects-dirs": ["%s"],
+              "include-dirs": ["%s"],
               "internal-analysis": true,
               "harness": "cursor,codex",
+              "exclude-files": ["AGENTS.md", "mcp.json"],
+              "exclude-dirs": ["cursor-rules-agile"],
               "report-type": ["json"],
               "report-output-dir": "%s"
             }
@@ -152,6 +241,8 @@ class AuditCliTest {
         assertTrue(request.shouldShowInternalAnalysis(false));
         assertTrue(request.hasProjectsDirectories());
         assertEquals("cursor,codex", request.harnessCsv());
+        assertEquals(List.of("AGENTS.md", "mcp.json"), request.skipFiles());
+        assertEquals(List.of("cursor-rules-agile"), request.excludeDirectories());
         assertTrue(request.reportOptions().jsonEnabled());
     }
 
@@ -179,7 +270,7 @@ class AuditCliTest {
             configFile,
             """
             {
-              "projects-dirs": ["%s"],
+              "include-dirs": ["%s"],
               "output-dir": "%s"
             }
             """.formatted(projects, output)
@@ -204,7 +295,26 @@ class AuditCliTest {
         ObjectMapper mapper = JsonMapper.create();
         ConfigurationStore store = new ConfigurationStore(mapper);
         AuditConfig saved = factory(home).create(new ConfigOverrides(project, null, output, 90, "cursor", true, false, false));
-        store.save(saved);
+        AuditConfig legacySaved = new AuditConfig(
+            saved.projectRoot(),
+            saved.projectsDirectory(),
+            saved.projectsDirectories(),
+            saved.projectScanRoots(),
+            saved.outputDirectory(),
+            saved.harnesses(),
+            java.util.EnumSet.of(AssetType.SKILL, AssetType.MCP, AssetType.RULE, AssetType.CONFIG),
+            saved.interval(),
+            saved.uiEnabled(),
+            saved.autoConfirm(),
+            saved.verbose(),
+            saved.privacyMode(),
+            saved.missingLocationBehavior(),
+            saved.skipFiles(),
+            saved.excludeDirectories(),
+            saved.userRoots(),
+            saved.projectRoots()
+        );
+        store.save(legacySaved);
 
         AuditConfig merged = new ConfigurationFactory(new DefaultPathResolver(home), store)
             .create(new ConfigOverrides(null, null, output, 15, "claude,codex", true, true, true));
@@ -212,6 +322,7 @@ class AuditCliTest {
         assertEquals(project.toAbsolutePath().normalize(), merged.projectRoot());
         assertEquals(15, merged.interval().toSeconds());
         assertEquals(java.util.Set.of(Harness.CLAUDE, Harness.CODEX), merged.harnesses());
+        assertTrue(merged.assetTypes().contains(AssetType.GUIDANCE));
         assertTrue(merged.autoConfirm());
         assertTrue(merged.verbose());
         assertFalse(merged.uiEnabled());
@@ -281,7 +392,8 @@ class AuditCliTest {
         assertTrue(Files.exists(new SnapshotStore(JsonMapper.create()).snapshotPath(output.toAbsolutePath().normalize())));
         assertTrue(outputText.contains("AI Agent Harness Monitor"));
         assertTrue(outputText.contains("Skills (1)"));
-        assertTrue(outputText.contains("Rules (1)"));
+        assertTrue(outputText.contains("Rules (0)"));
+        assertTrue(outputText.contains("Guidance files (1)"));
         assertTrue(outputText.contains("MCPs (1)"));
     }
 
@@ -365,6 +477,7 @@ class AuditCliTest {
         assertTrue(statusView.contains("PROJECT LEVEL"));
         assertTrue(statusView.contains("Skills"));
         assertTrue(statusView.contains("MCPs"));
+        assertTrue(statusView.contains("Guidance files"));
         assertTrue(statusView.contains("Others"));
         assertTrue(statusView.contains("SKILL.md"));
         assertTrue(statusView.contains("mcp.json"));

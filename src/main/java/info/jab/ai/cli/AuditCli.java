@@ -9,13 +9,14 @@ import info.jab.ai.config.JsonMapper;
 import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Optional;
 import java.util.concurrent.Callable;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
 @Command(
     name = "ai-agent-audit",
-    description = "Audit AI agent harness skills, MCP servers, rules, and config.",
+    description = "Audit AI agent harness skills, MCP servers, rules, guidance, and config.",
     mixinStandardHelpOptions = true,
     version = "ai-agent-audit 1.0-SNAPSHOT",
     subcommands = {
@@ -33,14 +34,14 @@ public final class AuditCli implements Runnable {
     static final class InitCommand implements Callable<Integer> {
         @Option(
             names = "--config",
-            description = "Inline JSON or path to a JSON file. Example: '{\"projects-dirs\":[\"/Users/me/IdeaProjects\"]}'"
+            description = "Inline JSON or path to a JSON file. Example: '{\"include-dirs\":[\"/Users/me/IdeaProjects\"]}'"
         )
         String config;
 
         @Option(names = "--config-file", description = "Path to a JSON configuration file.")
         Path configFile;
 
-        @Option(names = "--internal-analysis", description = "Print the internal skills, rules, and MCP drill-down.")
+        @Option(names = "--internal-analysis", description = "Print the internal skills, rules, guidance, and MCP drill-down.")
         boolean internalAnalysis;
 
         @Option(names = "--no-ui", description = "Disable TamboUI and use plain console output.")
@@ -55,13 +56,15 @@ public final class AuditCli implements Runnable {
         @Override
         public Integer call() throws Exception {
             InitRequest initRequest = readRequest();
+            Optional<String> configurationSource = configurationSource();
             boolean configurationProvided = config != null || configFile != null;
             ConfigOverrides overrides = initRequest.toOverrides(noUi, yes || configurationProvided, verbose);
             return application().init(
                 configurationFactory().create(overrides),
                 initRequest.shouldShowInternalAnalysis(internalAnalysis),
                 !initRequest.hasProjectsDirectories(),
-                initRequest.reportOptions()
+                initRequest.reportOptions(),
+                configurationSource
             );
         }
 
@@ -80,6 +83,25 @@ public final class AuditCli implements Runnable {
                 return JsonMapper.create().readValue(trimmedConfig, InitRequest.class);
             }
             return JsonMapper.create().readValue(Files.readString(Path.of(trimmedConfig)), InitRequest.class);
+        }
+
+        private Optional<String> configurationSource() {
+            if (configFile != null) {
+                return Optional.of(fileName(configFile));
+            }
+            if (config == null || config.isBlank()) {
+                return Optional.empty();
+            }
+            String trimmedConfig = config.trim();
+            if (trimmedConfig.startsWith("{")) {
+                return Optional.of("inline JSON");
+            }
+            return Optional.of(fileName(Path.of(trimmedConfig)));
+        }
+
+        private String fileName(Path path) {
+            Path fileName = path.getFileName();
+            return fileName == null ? path.toString() : fileName.toString();
         }
     }
 

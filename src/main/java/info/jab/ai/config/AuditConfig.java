@@ -24,11 +24,15 @@ public record AuditConfig(
     boolean verbose,
     PrivacyMode privacyMode,
     MissingLocationBehavior missingLocationBehavior,
+    List<String> skipFiles,
+    List<String> excludeDirectories,
     Map<Harness, Path> userRoots,
     Map<String, Path> projectRoots
 ) {
     public AuditConfig {
         projectsDirectories = projectsDirectories == null ? List.of(projectsDirectory) : List.copyOf(projectsDirectories);
         projectScanRoots = projectScanRoots == null ? List.of(projectRoot) : List.copyOf(projectScanRoots);
+        skipFiles = skipFiles == null ? List.of() : List.copyOf(skipFiles);
+        excludeDirectories = excludeDirectories == null ? List.of() : List.copyOf(excludeDirectories);
     }
 }

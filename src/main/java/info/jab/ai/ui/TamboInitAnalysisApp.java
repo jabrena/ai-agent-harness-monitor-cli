@@ -18,10 +18,13 @@ import info.jab.ai.model.Finding;
 import info.jab.ai.model.Harness;
 import info.jab.ai.model.Scope;
 import info.jab.ai.model.Snapshot;
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
@@ -29,17 +32,21 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 public final class TamboInitAnalysisApp extends ToolkitApp {
 
     private static final int PAGE_SIZE = 12;
     private static final int PROJECT_PAGE_SIZE = 9;
     private static final int PREVIEW_LINES = 12;
+    private static final int SCANNER_OUTPUT_LINES = 16;
+    private static final Duration SKILL_SCANNER_TIMEOUT = Duration.ofMinutes(2);
+    private static final String SKILL_SCANNER_REPOSITORY = "https://github.com/cisco-ai-defense/skill-scanner";
 
     private final AuditConfig config;
     private Snapshot snapshot;
     private List<ChangeEvent> changes;
-    private Optional<Path> reportPath;
+    private final Optional<String> configurationSource;
     private final RefreshSource refreshSource;
     private Optional<String> refreshError = Optional.empty();
     private View view = View.OVERVIEW;
@@ -49,37 +56,31 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
     private Optional<Path> selectedSkillFile = Optional.empty();
     private View findingReturnView = View.OVERVIEW;
     private boolean deleteConfirmationPending;
-    private Optional<String> actionMessage = Optional.empty();
+    private Optional<String> actionTitle = Optional.empty();
+    private List<String> actionMessages = List.of();
+    private long scannerRunId;
+    private long scanRunId;
     private Thread.UncaughtExceptionHandler previousUncaughtExceptionHandler;
 
     public TamboInitAnalysisApp(AuditConfig config, Snapshot snapshot) {
-        this(config, snapshot, List.of(), Optional.empty());
+        this(config, snapshot, List.of());
     }
 
     public TamboInitAnalysisApp(AuditConfig config, Snapshot snapshot, List<ChangeEvent> changes) {
-        this(config, snapshot, changes, Optional.empty());
+        this(config, snapshot, changes, Optional.empty(), null);
     }
 
     public TamboInitAnalysisApp(
         AuditConfig config,
         Snapshot snapshot,
         List<ChangeEvent> changes,
-        Optional<Path> reportPath
-    ) {
-        this(config, snapshot, changes, reportPath, null);
-    }
-
-    public TamboInitAnalysisApp(
-        AuditConfig config,
-        Snapshot snapshot,
-        List<ChangeEvent> changes,
-        Optional<Path> reportPath,
+        Optional<String> configurationSource,
         RefreshSource refreshSource
     ) {
         this.config = config;
         this.snapshot = snapshot;
         this.changes = List.copyOf(changes);
-        this.reportPath = reportPath;
+        this.configurationSource = configurationSource == null ? Optional.empty() : configurationSource;
         this.refreshSource = refreshSource;
     }
 
@@ -110,10 +111,10 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
     }
 
     private EventResult handleKey(KeyEvent key) {
-        if (view == View.OVERVIEW && key.isCharIgnoreCase('q')) {
+        if (key.isCharIgnoreCase('q')) {
             return EventResult.HANDLED;
         }
-        if ((key.isQuit() || key.isCharIgnoreCase('q')) && view != View.OVERVIEW) {
+        if (key.isQuit()) {
             quit();
             return EventResult.HANDLED;
         }
@@ -145,36 +146,33 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
         }
         if ((view == View.FINDING_DETAIL || view == View.SKILL_FILE_DETAIL) && key.isCharIgnoreCase('d')) {
             deleteConfirmationPending = true;
-            actionMessage = Optional.of("Delete requested. Press Y to confirm, or B/Esc to cancel.");
+            showActionMessage("Delete requested. Press Y to confirm, or B/Esc to cancel.");
             return EventResult.HANDLED;
         }
         if ((view == View.FINDING_DETAIL || view == View.SKILL_FILE_DETAIL) && key.isCharIgnoreCase('y') && deleteConfirmationPending) {
             deleteSelectedFinding();
             return EventResult.HANDLED;
         }
-        if (view == View.FINDING_DETAIL && isSelectedSkill() && key.character() >= '1' && key.character() <= '9') {
-            return showSkillFileDetail(key.character() - '1');
-        }
-        if (view == View.PROJECTS && key.character() >= '1' && key.character() <= '9') {
-            return showProjectDetail(key.character() - '1');
-        }
-        if (view == View.PROJECT_DETAIL && key.character() >= '1' && key.character() <= '9') {
-            return showFindingDetail(key.character() - '1');
-        }
-        if (isHarnessView(view) && key.character() >= '1' && key.character() <= '9') {
-            return showHarnessFindingDetail(key.character() - '1');
-        }
-        if (key.isChar('1') || key.isCharIgnoreCase('c')) {
-            show(View.CURSOR);
+        if ((view == View.FINDING_DETAIL || view == View.SKILL_FILE_DETAIL) && isSelectedSkill() && key.isCharIgnoreCase('s')) {
+            scanSelectedSkill();
             return EventResult.HANDLED;
         }
-        if (key.isChar('2') || key.isCharIgnoreCase('a')) {
-            show(View.CLAUDE);
+        if ((view == View.USER || view == View.PROJECTS) && key.isCharIgnoreCase('s')) {
+            scanOnDemand();
             return EventResult.HANDLED;
         }
-        if (key.isChar('3') || key.isCharIgnoreCase('x')) {
-            show(View.CODEX);
-            return EventResult.HANDLED;
+        int digitOffset = digitOffset(key);
+        if (view == View.FINDING_DETAIL && isSelectedSkill() && digitOffset >= 0) {
+            return showSkillFileDetail(digitOffset);
+        }
+        if (view == View.PROJECTS && digitOffset >= 0) {
+            return showProjectDetail(digitOffset);
+        }
+        if (view == View.PROJECT_DETAIL && digitOffset >= 0) {
+            return showFindingDetail(digitOffset);
+        }
+        if (isFindingMenuView(view) && digitOffset >= 0) {
+            return showFindingMenuDetail(digitOffset);
         }
         if (key.isCharIgnoreCase('u')) {
             show(View.USER);
@@ -195,6 +193,15 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
         return EventResult.UNHANDLED;
     }
 
+    private int digitOffset(KeyEvent key) {
+        for (int digit = 1; digit <= 9; digit++) {
+            if (key.isChar((char) ('0' + digit))) {
+                return digit - 1;
+            }
+        }
+        return -1;
+    }
+
     private void preloadTuiKeyClasses() {
         KeyEvent.ofChar(' ');
         KeyModifiers.NONE.toString();
@@ -202,14 +209,17 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
 
     private void refreshFromInterval() {
         try {
-            RefreshResult result = refreshSource.refresh();
-            snapshot = result.snapshot();
-            changes = List.copyOf(result.changes());
-            reportPath = result.reportPath();
-            refreshError = Optional.empty();
+            applyRefresh(refreshSource.refresh());
         } catch (Exception e) {
             refreshError = Optional.of("Refresh failed: " + e.getMessage());
         }
+    }
+
+    private void applyRefresh(RefreshResult result) {
+        snapshot = result.snapshot();
+        changes = List.copyOf(result.changes());
+        refreshError = Optional.empty();
+        page = Math.min(page, maxPage());
     }
 
     private void handleUncaughtException(Thread thread, Throwable throwable) {
@@ -227,7 +237,9 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
     private void show(View nextView) {
         view = nextView;
         page = 0;
-        actionMessage = Optional.empty();
+        scannerRunId++;
+        actionTitle = Optional.empty();
+        actionMessages = List.of();
         deleteConfirmationPending = false;
     }
 
@@ -259,7 +271,7 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
         return EventResult.HANDLED;
     }
 
-    private EventResult showHarnessFindingDetail(int pageOffset) {
+    private EventResult showFindingMenuDetail(int pageOffset) {
         List<Finding> findings = sorted(findingsForView(view));
         int index = (page * PROJECT_PAGE_SIZE) + pageOffset;
         if (index >= findings.size()) {
@@ -289,9 +301,6 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
     private Element[] elementsForView() {
         return switch (view) {
             case OVERVIEW -> overview();
-            case CURSOR -> harnessView(Harness.CURSOR);
-            case CLAUDE -> harnessView(Harness.CLAUDE);
-            case CODEX -> harnessView(Harness.CODEX);
             case USER -> userView();
             case PROJECTS -> projectsView();
             case PROJECT_DETAIL -> projectDetailView();
@@ -304,9 +313,8 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
         List<Element> elements = new ArrayList<>();
         elements.add(text("Dynamic analysis").bold().cyan());
         elements.add(text("Scan complete: " + snapshot.findings().size() + " findings, " + changes.size() + " changes"));
-        elements.add(text("Scan update: " + config.interval().toSeconds() + "s"));
+        configurationSource.ifPresent(source -> elements.add(text("Configuration: " + source)));
         refreshError.ifPresent(error -> elements.add(text(error)));
-        reportPath.ifPresent(path -> elements.add(text("Report: " + path)));
         elements.add(spacer());
         elements.add(text("User harness discovery").bold());
         for (Harness harness : Harness.values()) {
@@ -314,21 +322,9 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
         }
         elements.add(spacer());
         elements.add(text("Project folders: " + config.projectsDirectories()));
-        elements.add(text("Projects discovered: " + config.projectScanRoots().size() + " -> " + projectDetectionCount() + " detections"));
+        elements.add(text("Projects with detections: " + projectDetections().size()));
         elements.add(spacer());
-        elements.add(text("Navigation: 1 Cursor, 2 Claude, 3 Codex, U user, P projects, Esc quit").dim());
-        return elements.toArray(Element[]::new);
-    }
-
-    private Element[] harnessView(Harness harness) {
-        List<Finding> findings = userFindingsForHarness(harness);
-        List<Element> elements = header(harness.displayName() + " Discovery");
-        Path userRoot = config.userRoots().get(harness);
-        elements.add(text("User path: " + userRoot));
-        elements.add(text("User detections: " + count(harness, Scope.USER)));
-        elements.add(spacer());
-        addCounts(elements, findings);
-        addPagedFindingMenu(elements, findings);
+        elements.add(text("Navigation: U user, P projects, Esc quit").dim());
         return elements.toArray(Element[]::new);
     }
 
@@ -336,22 +332,27 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
         List<Finding> findings = sorted(snapshot.findings().stream()
             .filter(finding -> finding.scope() == Scope.USER)
             .toList());
-        List<Element> elements = header("User Level Discovery");
+        List<Element> elements = scanHeader("User Level Discovery");
         for (Harness harness : Harness.values()) {
-            elements.add(text(harness.displayName() + " path: " + config.userRoots().get(harness)));
-            elements.add(text("  detections: " + count(harness, Scope.USER)));
+            elements.add(text(harness.displayName() + ": " + userHarnessSummary(harness)));
         }
-        addPagedFindings(elements, findings);
+        elements.add(spacer());
+        addCounts(elements, findings);
+        addPagedFindingMenu(elements, findings);
+        addFooterMessage(elements);
         return elements.toArray(Element[]::new);
     }
 
     private Element[] projectsView() {
-        List<Element> elements = header("Project Discovery");
+        List<Element> elements = scanHeader("Project Discovery");
         elements.add(text("Project folders: " + config.projectsDirectories()));
         List<ProjectDetection> projectDetections = projectDetections();
-        elements.add(text("Projects discovered: " + config.projectScanRoots().size() + " -> " + projectDetections.size() + " with detections"));
+        elements.add(text(
+            "Projects with detections: " + projectDetections.size() + " -> " + totalProjectDetections(projectDetections) + " detections"
+        ));
         elements.add(spacer());
         addPagedProjects(elements, projectDetections);
+        addFooterMessage(elements);
         return elements.toArray(Element[]::new);
     }
 
@@ -382,7 +383,7 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
         }
         List<Element> elements = new ArrayList<>();
         elements.add(text("Detection Details").bold().cyan());
-        elements.add(text("B/Esc back, D delete, Y confirm delete, H overview, Q quit").dim());
+        elements.add(text("B/Esc back, D delete, Y confirm delete, H overview").dim());
         elements.add(spacer());
         elements.add(text("Harness: " + selected.harness().displayName()));
         elements.add(text("Type: " + selected.assetType().name().toLowerCase(Locale.ROOT)));
@@ -400,7 +401,7 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
         List<Element> elements = new ArrayList<>();
         Path skillRoot = skillRoot(skill);
         elements.add(text("Skill Details").bold().cyan());
-        elements.add(text("B/Esc back, 1-9 open file, N/PageDown next, R/PageUp previous, D delete whole skill, Q quit").dim());
+        elements.add(text("B/Esc back, 1-9 open file, S scanner, N/PageDown next, R/PageUp previous, D delete whole skill").dim());
         elements.add(spacer());
         elements.add(text("Harness: " + skill.harness().displayName()));
         elements.add(text("Skill: " + skill.name()));
@@ -419,7 +420,7 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
         Path file = selectedSkillFile.get();
         List<Element> elements = new ArrayList<>();
         elements.add(text("Skill File Preview").bold().cyan());
-        elements.add(text("B/Esc back, D delete whole skill, Y confirm delete, H overview, Q quit").dim());
+        elements.add(text("B/Esc back, S scanner, D delete whole skill, Y confirm delete, H overview").dim());
         elements.add(spacer());
         elements.add(text("File: " + file));
         selectedFinding.map(this::skillRoot).ifPresent(root -> elements.add(text("Skill root: " + root)));
@@ -434,7 +435,15 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
     private List<Element> header(String title) {
         List<Element> elements = new ArrayList<>();
         elements.add(text(title).bold().cyan());
-        elements.add(text("B/Esc back, H overview, N/PageDown next, R/PageUp previous, Q quit").dim());
+        elements.add(text("B/Esc back, H overview, N/PageDown next, R/PageUp previous").dim());
+        elements.add(spacer());
+        return elements;
+    }
+
+    private List<Element> scanHeader(String title) {
+        List<Element> elements = new ArrayList<>();
+        elements.add(text(title).bold().cyan());
+        elements.add(text("B/Esc back, H overview, S Scan, N/PageDown next, R/PageUp previous").dim());
         elements.add(spacer());
         return elements;
     }
@@ -451,15 +460,9 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
         elements.add(text("Detected assets").bold());
         elements.add(text("Skills: " + counts.get(AssetType.SKILL)));
         elements.add(text("Rules: " + counts.get(AssetType.RULE)));
+        elements.add(text("Guidance files: " + counts.get(AssetType.GUIDANCE)));
         elements.add(text("MCPs: " + counts.get(AssetType.MCP)));
         elements.add(text("Config files: " + counts.get(AssetType.CONFIG)));
-    }
-
-    private void addPagedFindings(List<Element> elements, List<Finding> findings) {
-        List<String> lines = sorted(findings).stream()
-            .map(this::formatFinding)
-            .toList();
-        addPagedLines(elements, lines);
     }
 
     private void addPagedFindingMenu(List<Element> elements, List<Finding> findings) {
@@ -522,47 +525,81 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
         }
     }
 
-    private void addPagedLines(List<Element> elements, List<String> lines) {
-        elements.add(spacer());
-        elements.add(text("Details (" + lines.size() + ")").bold());
-        if (lines.isEmpty()) {
-            elements.add(text("- none"));
-            return;
-        }
-        int maxPage = maxPage(lines.size());
-        page = Math.min(page, maxPage);
-        int start = page * PAGE_SIZE;
-        int end = Math.min(lines.size(), start + PAGE_SIZE);
-        elements.add(text("Page " + (page + 1) + "/" + (maxPage + 1)));
-        for (String line : lines.subList(start, end)) {
-            elements.add(text("- " + line));
+    private void addFooterMessage(List<Element> elements) {
+        if (!actionMessages.isEmpty()) {
+            elements.add(spacer());
+            actionTitle.ifPresent(title -> {
+                elements.add(text(title).bold().cyan());
+                elements.add(text("B/Esc back, 1-9 open file, N/PageDown next, R/PageUp previous, D delete whole skill").dim());
+                elements.add(spacer());
+            });
+            actionMessages.forEach(message -> elements.add(actionTitle.isPresent() ? text(message) : text(message).dim()));
         }
     }
 
-    private void addFooterMessage(List<Element> elements) {
-        actionMessage.ifPresent(message -> {
-            elements.add(spacer());
-            elements.add(text(message).dim());
-        });
+    private void showActionMessage(String message) {
+        scannerRunId++;
+        actionTitle = Optional.empty();
+        actionMessages = List.of(message);
+    }
+
+    private void showActionSection(String title, List<String> messages) {
+        actionTitle = Optional.of(title);
+        actionMessages = List.copyOf(messages);
+    }
+
+    private void scanOnDemand() {
+        if (refreshSource == null) {
+            showActionMessage("Scan is unavailable in this mode.");
+            return;
+        }
+        long runId = ++scanRunId;
+        showActionMessage("Scan started...");
+        Thread scanThread = new Thread(() -> runOnDemandScan(runId), "on-demand-scan-runner");
+        scanThread.setDaemon(true);
+        scanThread.start();
+    }
+
+    private void runOnDemandScan(long runId) {
+        try {
+            RefreshResult result = refreshSource.refresh();
+            runner().runOnRenderThread(() -> {
+                if (runId == scanRunId) {
+                    applyRefresh(result);
+                    showActionMessage("Scan complete: " + snapshot.findings().size() + " findings.");
+                }
+            });
+        } catch (Exception e) {
+            runner().runOnRenderThread(() -> {
+                if (runId == scanRunId) {
+                    refreshError = Optional.of("Refresh failed: " + e.getMessage());
+                    showActionMessage("Scan failed: " + e.getMessage());
+                }
+            });
+        }
     }
 
     private String formatFinding(Finding finding) {
+        if (finding.assetType() == AssetType.SKILL) {
+            return assetTypeLabel(finding.assetType()) + ": " + finding.name();
+        }
         return finding.harness().displayName()
             + " "
-            + finding.scope().name().toLowerCase(Locale.ROOT)
-            + " "
-            + finding.assetType().name().toLowerCase(Locale.ROOT)
-            + " "
+            + assetTypeLabel(finding.assetType())
+            + ": "
             + finding.name()
             + " -> "
             + finding.path();
     }
 
-    private List<Finding> userFindingsForHarness(Harness harness) {
-        return snapshot.findings().stream()
-            .filter(finding -> finding.harness() == harness)
-            .filter(finding -> finding.scope() == Scope.USER)
-            .toList();
+    private String assetTypeLabel(AssetType assetType) {
+        return switch (assetType) {
+            case SKILL -> "Skill";
+            case RULE -> "Rule";
+            case GUIDANCE -> "Guidance file";
+            case MCP -> "MCP";
+            case CONFIG -> "Config file";
+        };
     }
 
     private List<Finding> sorted(List<Finding> findings) {
@@ -594,17 +631,14 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
 
     private List<Finding> findingsForView(View currentView) {
         return switch (currentView) {
-            case CURSOR -> userFindingsForHarness(Harness.CURSOR);
-            case CLAUDE -> userFindingsForHarness(Harness.CLAUDE);
-            case CODEX -> userFindingsForHarness(Harness.CODEX);
             case USER -> sorted(snapshot.findings().stream().filter(finding -> finding.scope() == Scope.USER).toList());
             case PROJECT_DETAIL -> selectedProject.map(this::projectFindings).orElse(List.of());
             case OVERVIEW, PROJECTS, FINDING_DETAIL, SKILL_FILE_DETAIL -> List.of();
         };
     }
 
-    private boolean isHarnessView(View currentView) {
-        return currentView == View.CURSOR || currentView == View.CLAUDE || currentView == View.CODEX;
+    private boolean isFindingMenuView(View currentView) {
+        return currentView == View.USER;
     }
 
     private List<ProjectDetection> projectDetections() {
@@ -612,6 +646,12 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
             .map(projectRoot -> new ProjectDetection(projectRoot, countProjectFindings(projectRoot)))
             .filter(project -> project.detections() > 0)
             .toList();
+    }
+
+    private int totalProjectDetections(List<ProjectDetection> projectDetections) {
+        return projectDetections.stream()
+            .mapToInt(ProjectDetection::detections)
+            .sum();
     }
 
     private boolean belongsToProject(Finding finding, Path normalizedProjectRoot) {
@@ -633,12 +673,6 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
         } catch (RuntimeException e) {
             return Optional.empty();
         }
-    }
-
-    private long projectDetectionCount() {
-        return snapshot.findings().stream()
-            .filter(finding -> finding.scope() == Scope.PROJECT)
-            .count();
     }
 
     private List<String> preview(Finding finding) {
@@ -716,6 +750,147 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
         }
     }
 
+    private void scanSelectedSkill() {
+        if (selectedFinding.isEmpty()) {
+            return;
+        }
+        deleteConfirmationPending = false;
+        Path scanTarget = skillRoot(selectedFinding.get());
+        long runId = ++scannerRunId;
+        showActionSection("Skill Scanner Output", scannerInitialMessages(scanTarget));
+        Thread scannerThread = new Thread(() -> runSkillScanner(runId, scanTarget), "skill-scanner-runner");
+        scannerThread.setDaemon(true);
+        scannerThread.start();
+    }
+
+    private List<String> scannerInitialMessages(Path scanTarget) {
+        return List.of(
+            "Command: skill-scanner scan " + scanTarget + " --use-behavioral --policy strict",
+            "Status: starting..."
+        );
+    }
+
+    private void runSkillScanner(long runId, Path scanTarget) {
+        try {
+            if (!isSkillScannerInstalled()) {
+                updateScannerMessages(runId, List.of(
+                    "skill-scanner is not installed.",
+                    "Visit: " + SKILL_SCANNER_REPOSITORY
+                ));
+                return;
+            }
+            updateScannerStatus(runId, "Status: running...");
+            runSkillScannerProcess(runId, scanTarget);
+        } catch (IOException e) {
+            updateScannerStatus(runId, "Skill scanner failed: " + e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            updateScannerStatus(runId, "Skill scanner interrupted.");
+        }
+    }
+
+    private boolean isSkillScannerInstalled() throws InterruptedException {
+        try {
+            Process process = new ProcessBuilder("skill-scanner", "--help")
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .redirectError(ProcessBuilder.Redirect.DISCARD)
+                .start();
+            boolean completed = process.waitFor(10, TimeUnit.SECONDS);
+            if (!completed) {
+                process.destroyForcibly();
+            }
+            return completed;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    private void runSkillScannerProcess(long runId, Path scanTarget) throws IOException, InterruptedException {
+        Process process = new ProcessBuilder("skill-scanner", "scan", scanTarget.toString(), "--use-behavioral", "--policy", "strict")
+            .redirectErrorStream(true)
+            .start();
+        Thread outputReader = new Thread(() -> readOutput(runId, process), "skill-scanner-output-reader");
+        outputReader.setDaemon(true);
+        outputReader.start();
+
+        boolean completed = process.waitFor(SKILL_SCANNER_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+        if (!completed) {
+            process.destroy();
+            if (!process.waitFor(1, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+            }
+        }
+        outputReader.join(1_000);
+        if (completed) {
+            updateScannerStatus(runId, "Exit code: " + process.exitValue());
+        } else {
+            updateScannerStatus(runId, "Timed out after " + SKILL_SCANNER_TIMEOUT.toSeconds() + "s");
+        }
+    }
+
+    private void readOutput(long runId, Process process) {
+        try (var reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                sanitizeScannerLine(line).ifPresent(sanitized -> appendScannerOutput(runId, sanitized));
+            }
+        } catch (IOException e) {
+            appendScannerOutput(runId, "(scanner output unavailable: " + e.getMessage() + ")");
+        }
+    }
+
+    private Optional<String> sanitizeScannerLine(String line) {
+        String sanitized = line
+            .replaceAll("\\u001B\\][^\\u0007]*(\\u0007|\\u001B\\\\)", "")
+            .replaceAll("\\u001B\\[[0-?]*[ -/]*[@-~]", "")
+            .replaceAll("[\\p{Cntrl}&&[^\\t]]", "");
+        return sanitized.isBlank() ? Optional.empty() : Optional.of(sanitized);
+    }
+
+    private void updateScannerMessages(long runId, List<String> messages) {
+        runner().runOnRenderThread(() -> {
+            if (runId == scannerRunId) {
+                showActionSection("Skill Scanner Output", messages);
+            }
+        });
+    }
+
+    private void updateScannerStatus(long runId, String status) {
+        runner().runOnRenderThread(() -> {
+            if (runId == scannerRunId && actionTitle.isPresent()) {
+                List<String> messages = new ArrayList<>(actionMessages);
+                if (messages.size() < 2) {
+                    messages.add(status);
+                } else {
+                    messages.set(1, status);
+                }
+                actionMessages = List.copyOf(messages);
+            }
+        });
+    }
+
+    private void appendScannerOutput(long runId, String line) {
+        runner().runOnRenderThread(() -> {
+            if (runId == scannerRunId && actionTitle.isPresent()) {
+                List<String> messages = new ArrayList<>(actionMessages);
+                messages.add(line);
+                actionMessages = List.copyOf(trimScannerMessages(messages));
+            }
+        });
+    }
+
+    private List<String> trimScannerMessages(List<String> messages) {
+        int headerLines = Math.min(2, messages.size());
+        int outputLines = messages.size() - headerLines;
+        if (outputLines <= SCANNER_OUTPUT_LINES) {
+            return messages;
+        }
+        List<String> trimmed = new ArrayList<>(messages.subList(0, headerLines));
+        trimmed.add("... output truncated to last " + SCANNER_OUTPUT_LINES + " lines");
+        trimmed.addAll(messages.subList(messages.size() - SCANNER_OUTPUT_LINES, messages.size()));
+        return trimmed;
+    }
+
     private void deleteSelectedFinding() {
         if (selectedFinding.isEmpty()) {
             return;
@@ -728,9 +903,9 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
             selectedFinding = Optional.empty();
             refreshAfterDelete(finding);
             show(findingReturnView);
-            actionMessage = Optional.of("Deleted: " + target);
+            showActionMessage("Deleted: " + target);
         } catch (IOException | RuntimeException e) {
-            actionMessage = Optional.of("Delete failed: " + e.getMessage());
+            showActionMessage("Delete failed: " + e.getMessage());
             deleteConfirmationPending = false;
         }
     }
@@ -781,9 +956,6 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
 
     private int maxPage() {
         int size = switch (view) {
-            case CURSOR -> userFindingsForHarness(Harness.CURSOR).size();
-            case CLAUDE -> userFindingsForHarness(Harness.CLAUDE).size();
-            case CODEX -> userFindingsForHarness(Harness.CODEX).size();
             case USER -> (int) snapshot.findings().stream().filter(finding -> finding.scope() == Scope.USER).count();
             case PROJECTS -> projectDetections().size();
             case PROJECT_DETAIL -> selectedProject.map(this::projectFindings).map(List::size).orElse(0);
@@ -794,14 +966,10 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
         int pageSize = view == View.PROJECTS
             || view == View.PROJECT_DETAIL
             || view == View.FINDING_DETAIL
-            || isHarnessView(view)
+            || isFindingMenuView(view)
             ? PROJECT_PAGE_SIZE
             : PAGE_SIZE;
         return maxPage(size, pageSize);
-    }
-
-    private int maxPage(int size) {
-        return maxPage(size, PAGE_SIZE);
     }
 
     private int maxPage(int size, int pageSize) {
@@ -810,9 +978,6 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
 
     private enum View {
         OVERVIEW,
-        CURSOR,
-        CLAUDE,
-        CODEX,
         USER,
         PROJECTS,
         PROJECT_DETAIL,
@@ -825,13 +990,13 @@ public final class TamboInitAnalysisApp extends ToolkitApp {
         RefreshResult refresh() throws Exception;
     }
 
-    public record RefreshResult(Snapshot snapshot, List<ChangeEvent> changes, Optional<Path> reportPath) {
+    public record RefreshResult(Snapshot snapshot, List<ChangeEvent> changes) {
         public RefreshResult {
             changes = List.copyOf(changes);
-            reportPath = reportPath == null ? Optional.empty() : reportPath;
         }
     }
 
     private record ProjectDetection(Path path, int detections) {
     }
+
 }

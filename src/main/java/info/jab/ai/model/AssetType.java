@@ -4,5 +4,6 @@ public enum AssetType {
     SKILL,
     MCP,
     RULE,
+    GUIDANCE,
     CONFIG
 }

@@ -86,6 +86,12 @@
       <artifactId>tamboui-tui</artifactId>
       <version>${tamboui.version}</version>
     </dependency>
+    <!-- Don't remove this dependency -->
+    <dependency>
+      <groupId>dev.tamboui</groupId>
+      <artifactId>tamboui-panama-backend</artifactId>
+      <version>${tamboui.version}</version>
+    </dependency>
     <!-- Testing dependencies -->
     <dependency>
       <groupId>org.junit.jupiter</groupId>
