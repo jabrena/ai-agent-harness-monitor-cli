@@ -53,6 +53,8 @@ public final class ConfigurationViewPrinter {
         for (Path projectRoot : config.projectScanRoots()) {
             out.println("- " + projectRoot);
             out.println("  - Cursor: " + withStatus(projectRoot.resolve(".cursor")));
+            out.println("  - Agents: " + withStatus(projectRoot.resolve(".agents")) + ", skills: " + withStatus(projectRoot.resolve(".agents").resolve("skills")));
+            out.println("  - Skills: " + withStatus(projectRoot.resolve("skills")));
             out.println("  - Claude: " + withStatus(projectRoot.resolve(".claude")) + ", " + withStatus(projectRoot.resolve("CLAUDE.md")));
             out.println("  - Codex: " + withStatus(projectRoot.resolve(".codex")) + ", " + withStatus(projectRoot.resolve("AGENTS.md")));
         }

@@ -69,6 +69,16 @@ public final class AuditApplication {
         boolean promptProjectsDirectory,
         ReportOptions reportOptions
     ) throws IOException {
+        return init(config, internalAnalysisRequested, promptProjectsDirectory, reportOptions, Optional.empty());
+    }
+
+    public int init(
+        AuditConfig config,
+        boolean internalAnalysisRequested,
+        boolean promptProjectsDirectory,
+        ReportOptions reportOptions,
+        Optional<String> configurationSource
+    ) throws IOException {
         Optional<AuditConfig> reviewedConfig = reviewer.review(config, promptProjectsDirectory);
         if (reviewedConfig.isEmpty()) {
             return 2;
@@ -78,7 +88,7 @@ public final class AuditApplication {
         boolean useUi = shouldUseTamboUi(activeConfig);
         ScanResult result = runSingleScan(activeConfig, !useUi);
         Optional<Path> reportPath = reportWriter.write(activeConfig, result.snapshot(), result.changes(), reportOptions);
-        boolean shownInUi = useUi && reviewInitAnalysis(activeConfig, result, reportPath, reportOptions);
+        boolean shownInUi = useUi && reviewInitAnalysis(activeConfig, result, reportOptions, configurationSource);
         if (!shownInUi) {
             if (useUi) {
                 summaryPrinter.printScanResult(result.snapshot(), result.changes());
@@ -155,14 +165,20 @@ public final class AuditApplication {
     private boolean reviewInitAnalysis(
         AuditConfig config,
         ScanResult result,
-        Optional<Path> reportPath,
-        ReportOptions reportOptions
+        ReportOptions reportOptions,
+        Optional<String> configurationSource
     ) {
         if (!shouldUseTamboUi(config)) {
             return false;
         }
         try {
-            new TamboInitAnalysisApp(config, result.snapshot(), result.changes(), reportPath, () -> refresh(config, reportOptions)).run();
+            new TamboInitAnalysisApp(
+                config,
+                result.snapshot(),
+                result.changes(),
+                configurationSource,
+                () -> refresh(config, reportOptions)
+            ).run();
             return true;
         } catch (Exception e) {
             return false;
@@ -171,8 +187,8 @@ public final class AuditApplication {
 
     private TamboInitAnalysisApp.RefreshResult refresh(AuditConfig config, ReportOptions reportOptions) throws IOException {
         ScanResult result = runSingleScan(config, false);
-        Optional<Path> reportPath = reportWriter.write(config, result.snapshot(), result.changes(), reportOptions);
-        return new TamboInitAnalysisApp.RefreshResult(result.snapshot(), result.changes(), reportPath);
+        reportWriter.write(config, result.snapshot(), result.changes(), reportOptions);
+        return new TamboInitAnalysisApp.RefreshResult(result.snapshot(), result.changes());
     }
 
     private boolean promptForInternalAnalysis(AuditConfig config) {

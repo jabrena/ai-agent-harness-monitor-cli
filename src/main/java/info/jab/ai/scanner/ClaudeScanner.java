@@ -49,10 +49,11 @@ public final class ClaudeScanner implements HarnessScanner {
             }
             if (config.assetTypes().contains(AssetType.MCP)) {
                 addFileIfExists(findings, harness(), Scope.PROJECT, AssetType.MCP, projectRoot.getFileName() + ":claude-project-mcp", projectRoot.resolve(".claude").resolve("mcp.json"));
+                addFileIfExists(findings, harness(), Scope.PROJECT, AssetType.MCP, projectRoot.getFileName() + ":claude-project-root-mcp", projectRoot.resolve(".mcp.json"));
                 addDirectoryChildren(findings, harness(), Scope.PROJECT, AssetType.MCP, projectRoot.resolve(".claude").resolve("mcps"), path -> hasExtension(path, ".json", ".yaml", ".yml"));
             }
-            if (config.assetTypes().contains(AssetType.RULE)) {
-                addFileIfExists(findings, harness(), Scope.PROJECT, AssetType.RULE, projectRoot.getFileName() + ":claude-guidance", projectRoot.resolve("CLAUDE.md"));
+            if (config.assetTypes().contains(AssetType.GUIDANCE)) {
+                addFileIfExists(findings, harness(), Scope.PROJECT, AssetType.GUIDANCE, projectRoot.getFileName() + ":claude-guidance", projectRoot.resolve("CLAUDE.md"));
             }
             if (config.assetTypes().contains(AssetType.CONFIG)) {
                 addFileIfExists(findings, harness(), Scope.PROJECT, AssetType.CONFIG, projectRoot.getFileName() + ":claude-project-settings", projectRoot.resolve(".claude").resolve("settings.json"));

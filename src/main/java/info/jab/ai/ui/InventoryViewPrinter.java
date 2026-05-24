@@ -48,6 +48,7 @@ public final class InventoryViewPrinter {
         out.println(title);
         printCategory("Skills", findings, AssetCategory.SKILLS);
         printCategory("MCPs", findings, AssetCategory.MCPS);
+        printCategory("Guidance files", findings, AssetCategory.GUIDANCE);
         printCategory("Others", findings, AssetCategory.OTHERS);
     }
 
@@ -55,6 +56,7 @@ public final class InventoryViewPrinter {
         out.println("- " + projectRoot);
         printCategory("  Skills", findings, AssetCategory.SKILLS);
         printCategory("  MCPs", findings, AssetCategory.MCPS);
+        printCategory("  Guidance files", findings, AssetCategory.GUIDANCE);
         printCategory("  Others", findings, AssetCategory.OTHERS);
     }
 
@@ -112,10 +114,16 @@ public final class InventoryViewPrinter {
                 return assetType == AssetType.MCP;
             }
         },
+        GUIDANCE {
+            @Override
+            boolean matches(AssetType assetType) {
+                return assetType == AssetType.GUIDANCE;
+            }
+        },
         OTHERS {
             @Override
             boolean matches(AssetType assetType) {
-                return assetType != AssetType.SKILL && assetType != AssetType.MCP;
+                return assetType != AssetType.SKILL && assetType != AssetType.MCP && assetType != AssetType.GUIDANCE;
             }
         };
 

@@ -22,6 +22,7 @@ public final class InitAnalysisPrinter {
         out.println("Detected assets:");
         out.println("- Skills: " + count(snapshot, AssetType.SKILL));
         out.println("- Rules: " + count(snapshot, AssetType.RULE));
+        out.println("- Guidance files: " + count(snapshot, AssetType.GUIDANCE));
         out.println("- MCPs: " + count(snapshot, AssetType.MCP));
         out.println("- Config files: " + count(snapshot, AssetType.CONFIG));
         out.flush();
@@ -32,6 +33,7 @@ public final class InitAnalysisPrinter {
         out.println("Internal Analysis");
         printCount("Skills", snapshot, AssetType.SKILL);
         printCount("Rules", snapshot, AssetType.RULE);
+        printCount("Guidance files", snapshot, AssetType.GUIDANCE);
         printCount("MCPs", snapshot, AssetType.MCP);
         out.flush();
     }

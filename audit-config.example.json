@@ -1,7 +1,14 @@
 {
   "user": "jabrena",
-  "projects-dirs": [
+  "include-dirs": [
     "/Users/jabrena/IdeaProjects/"
+  ],
+  "exclude-dirs": [ 
+    "cursor-rules-agile",
+    "cursor-rules-spring-boot"
+  ],
+  "exclude-files": [
+    ".mcp.json"
   ],
   "interval-seconds": 60,
   "report-type": ["json"],

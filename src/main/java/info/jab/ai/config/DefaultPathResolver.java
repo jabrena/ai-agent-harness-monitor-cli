@@ -25,6 +25,8 @@ public final class DefaultPathResolver {
     public Map<String, Path> projectRoots(Path projectRoot) {
         Map<String, Path> roots = new LinkedHashMap<>();
         roots.put("cursorProject", projectRoot.resolve(".cursor"));
+        roots.put("agentsProject", projectRoot.resolve(".agents"));
+        roots.put("skillsProject", projectRoot.resolve("skills"));
         roots.put("claudeProject", projectRoot.resolve(".claude"));
         roots.put("codexProject", projectRoot.resolve(".codex"));
         roots.put("agentsFile", projectRoot.resolve("AGENTS.md"));

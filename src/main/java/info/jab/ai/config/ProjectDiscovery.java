@@ -9,7 +9,7 @@ import java.util.List;
 
 public final class ProjectDiscovery {
 
-    private static final List<String> LOCAL_AGENT_MARKERS = List.of(".cursor", ".claude", ".codex", "AGENTS.md", "CLAUDE.md");
+    private static final List<String> LOCAL_AGENT_MARKERS = List.of(".cursor", ".claude", ".codex", ".agents", ".mcp.json", "AGENTS.md", "CLAUDE.md");
 
     public List<Path> discover(Path projectsDirectory) throws IOException {
         Path normalized = projectsDirectory.toAbsolutePath().normalize();

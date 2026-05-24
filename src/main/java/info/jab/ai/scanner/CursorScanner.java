@@ -42,6 +42,8 @@ public final class CursorScanner implements HarnessScanner {
         for (Path projectRoot : config.projectScanRoots()) {
             if (config.assetTypes().contains(AssetType.SKILL)) {
                 addDirectoryChildren(findings, harness(), Scope.PROJECT, AssetType.SKILL, projectRoot.resolve(".cursor").resolve("skills"), path -> hasExtension(path, ".md"));
+                addDirectoryChildren(findings, harness(), Scope.PROJECT, AssetType.SKILL, projectRoot.resolve(".agents").resolve("skills"), path -> hasExtension(path, ".md"));
+                addDirectoryChildren(findings, harness(), Scope.PROJECT, AssetType.SKILL, projectRoot.resolve("skills"), path -> hasExtension(path, ".md"));
             }
             if (config.assetTypes().contains(AssetType.MCP)) {
                 addFileIfExists(findings, harness(), Scope.PROJECT, AssetType.MCP, projectRoot.getFileName() + ":cursor-project-mcp", projectRoot.resolve(".cursor").resolve("mcp.json"));
