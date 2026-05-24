@@ -1,0 +1,9 @@
+{
+  "user": "jabrena",
+  "projects-dirs": [
+    "/Users/jabrena/IdeaProjects/"
+  ],
+  "interval-seconds": 60,
+  "report-type": ["json"],
+  "report-output-dir": "./target/audit-test-output"
+}
