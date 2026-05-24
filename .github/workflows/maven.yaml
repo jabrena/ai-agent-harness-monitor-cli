@@ -14,5 +14,14 @@ jobs:
         with:
           distribution: 'graalvm' # See 'Supported distributions' for available options
           java-version: '25'
+      - name: Get Maven project version
+        id: get_version
+        run: echo "VERSION=$(./mvnw --batch-mode --no-transfer-progress help:evaluate -Dexpression=project.version -q -DforceStdout)" >> $GITHUB_OUTPUT
       - name: Maven build
         run: ./mvnw --batch-mode --no-transfer-progress verify --file pom.xml
+      - name: Upload jar
+        uses: actions/upload-artifact@v7
+        with:
+          name: ai-agent-harness-monitor-cli-${{ steps.get_version.outputs.VERSION }}.jar
+          path: |
+            ./target/ai-agent-harness-monitor-cli-${{ steps.get_version.outputs.VERSION }}.jar
